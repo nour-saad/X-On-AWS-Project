@@ -1,0 +1,244 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: VPC with 2 public subnets and 2 private subnets
+
+Parameters:
+  VPCCidrBlock:
+    Type: String
+    Description: VPC Cidr Block
+    Default: 10.0.0.0/16
+    ConstraintDescription: Must be a valid CIDR block (e.g., 10.0.0.0/16)
+
+  PubSub1CidrBlock:
+    Type: String
+    Description: Public Subnet 1 Cidr Block
+    Default: 10.0.1.0/24
+    ConstraintDescription: Must be a valid CIDR block within the VPC CIDR range (e.g., 10.0.1.0/24)
+
+  PubSub2CidrBlock:
+    Type: String
+    Description: Public Subnet 2 Cidr Block
+    Default: 10.0.2.0/24
+    ConstraintDescription: Must be a valid CIDR block within the VPC CIDR range (e.g., 10.0.2.0/24)
+
+  PrivSub1CidrBlock:
+    Type: String
+    Description: Private Subnet 1 Cidr Block
+    Default: 10.0.3.0/24
+    ConstraintDescription: Must be a valid CIDR block within the VPC CIDR range (e.g., 10.0.3.0/24)
+
+  PrivSub2CidrBlock:
+    Type: String
+    Description: Private Subnet 2 Cidr Block
+    Default: 10.0.4.0/24
+    ConstraintDescription: Must be a valid CIDR block within the VPC CIDR range (e.g., 10.0.4.0/24)
+
+Resources:
+
+# Creating VPC
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VPCCidrBlock
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: AWS-VPC
+
+# VPC Internet Gateway
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: InternetGateway
+
+# Attaching VPC Internet Gateway
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    DependsOn: InternetGateway
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+# Creating Subnets, 2 Pub, 2 Priv
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PubSub1CidrBlock
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: PublicSubnet1
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PubSub2CidrBlock
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: PublicSubnet2
+
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PrivSub1CidrBlock
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: PrivateSubnet1
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PrivSub2CidrBlock
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: PrivateSubnet2
+
+# Creating 1 route table for both public subnets
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    DependsOn: VPC
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: PublicRouteTable
+
+# Creating internet route and associating it to the InternetGatewayAttachment
+  DefaultPublicInternetRoute:
+    Type: AWS::EC2::Route
+    DependsOn: PublicRouteTable
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+# Associating PublicRouteTable with both public subnets
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    DependsOn: 
+    - PublicSubnet1
+    - PublicRouteTable
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    DependsOn: 
+    - PublicSubnet1
+    - PublicRouteTable
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable
+
+# Creating NAT Gateway and EIP for each public subnet
+  EIPForNat1:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  NatGateway1:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      AllocationId: !GetAtt EIPForNat1.AllocationId
+      Tags:
+        - Key: Name
+          Value: NatGateway1
+
+  EIPForNat2:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  NatGateway2:
+    Type: AWS::EC2::NatGateway
+    DependsOn: PublicSubnet2
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      AllocationId: !GetAtt EIPForNat2.AllocationId
+      Tags:
+        - Key: Name
+          Value: NatGateway2
+
+# Creating 2 route tables for each private subnet
+  PrivateRouteTable1:
+    Type: AWS::EC2::RouteTable
+    DependsOn: VPC
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: PrivateRouteTable1
+
+  PrivateRouteTable2:
+    Type: AWS::EC2::RouteTable
+    DependsOn: VPC
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: PrivateRouteTable2
+
+  PrivRoute1:
+    Type: AWS::EC2::Route
+    DependsOn: PrivateRouteTable1
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable1
+      DestinationCidrBlock: !Ref VPCCidrBlock
+      GatewayId: !Ref NatGateway1
+
+  PrivRoute2:
+    Type: AWS::EC2::Route
+    DependsOn: PrivateRouteTable2
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable2
+      DestinationCidrBlock: !Ref VPCCidrBlock
+      GatewayId: !Ref NatGateway2
+
+# Associating each private route table to each private subnet
+  PrivSub1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    DependsOn: 
+    - PrivateSubnet1
+    - PrivateRouteTable1
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref PrivateRouteTable1
+
+  PrivSub2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    DependsOn: 
+    - PrivateSubnet2
+    - PrivateRouteTable2
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      RouteTableId: !Ref PrivateRouteTable2
+
+Outputs:
+  VPCId:
+    Description: VPC ID
+    Value: !Ref VPC
+  PublicSubnet1Id:
+    Description: Public Subnet 1 ID
+    Value: !Ref PublicSubnet1
+  PublicSubnet2Id:
+    Description: Public Subnet 2 ID
+    Value: !Ref PublicSubnet2
+  PrivateSubnet1Id:
+    Description: Private Subnet 1 ID
+    Value: !Ref PrivateSubnet1
+  PrivateSubnet2Id:
+    Description: Private Subnet 2 ID
+    Value: !Ref PrivateSubnet2
