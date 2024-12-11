@@ -1,0 +1,43 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Auto Scaling group with 2 EC2 instances in private subnets
+
+Parameters:
+  VPCId:
+    Type: String
+    Description: VPC ID
+  PrivateSubnet1Id:
+    Type: String
+    Description: Private Subnet 1 ID
+  PrivateSubnet2Id:
+    Type: String
+    Description: Private Subnet 2 ID
+
+Resources:
+  LaunchConfiguration:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      ImageId: ami-0abcdef1234567890
+      InstanceType: t2.micro
+      SecurityGroups: []
+      KeyName: MyKey
+
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      VPCZoneIdentifier:
+        - !Ref PrivateSubnet1Id
+        - !Ref PrivateSubnet2Id
+      LaunchConfigurationName: !Ref LaunchConfiguration
+      MinSize: 2
+      MaxSize: 2
+      DesiredCapacity: 2
+      Tags:
+        - Key: Name
+          Value: MyAutoScalingGroup
+          PropagateAtLaunch: true
+
+Outputs:
+  AutoScalingGroupId:
+    Description: Auto Scaling Group ID
+    Value: !Ref AutoScalingGroup
+
