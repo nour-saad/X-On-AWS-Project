@@ -37,7 +37,6 @@ Resources:
 # Creating VPC
   VPC:
     Type: AWS::EC2::VPC
-    DependsOn: VPCCidrBlock
     Properties:
       CidrBlock: !Ref VPCCidrBlock
       EnableDnsSupport: true
@@ -67,9 +66,7 @@ Resources:
 # Creating Subnets, 2 Pub, 2 Priv
   PublicSubnet1:
     Type: AWS::EC2::Subnet
-    DependsOn: 
-    - PubSub1CidrBlock
-    - VPC
+    DependsOn: VPC
     Properties:
       VpcId: !Ref VPC
       CidrBlock: !Ref PubSub1CidrBlock
@@ -81,9 +78,7 @@ Resources:
 
   PublicSubnet2:
     Type: AWS::EC2::Subnet
-    DependsOn: 
-    - PubSub2CidrBlock
-    - VPC
+    DependsOn: VPC
     Properties:
       VpcId: !Ref VPC
       CidrBlock: !Ref PubSub2CidrBlock
@@ -95,9 +90,7 @@ Resources:
 
   PrivateSubnet1:
     Type: AWS::EC2::Subnet
-    DependsOn: 
-    - PrivSub1CidrBlock
-    - VPC
+    DependsOn: VPC
     Properties:
       VpcId: !Ref VPC
       CidrBlock: !Ref PrivSub1CidrBlock
@@ -108,9 +101,7 @@ Resources:
 
   PrivateSubnet2:
     Type: AWS::EC2::Subnet
-    DependsOn: 
-    - PrivSub2CidrBlock
-    - VPC
+    DependsOn: VPC
     Properties:
       VpcId: !Ref VPC
       CidrBlock: !Ref PrivSub2CidrBlock
