@@ -137,7 +137,9 @@ Resources:
 
   PublicSubnet2RouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
-    DependsOn: PublicSubnet1
+    DependsOn: 
+    - PublicSubnet2
+    - PublicRouteTable
     Properties:
       SubnetId: !Ref PublicSubnet2
       RouteTableId: !Ref PublicRouteTable
@@ -150,6 +152,7 @@ Resources:
 
   NatGateway1:
     Type: AWS::EC2::NatGateway
+    DependsOn: PublicSubnet1
     Properties:
       SubnetId: !Ref PublicSubnet1
       AllocationId: !GetAtt EIPForNat1.AllocationId
@@ -193,7 +196,9 @@ Resources:
 
   PrivRoute1:
     Type: AWS::EC2::Route
-    DependsOn: PrivateRouteTable1
+    DependsOn: 
+    - PrivateRouteTable1
+    - NatGateway1
     Properties:
       RouteTableId: !Ref PrivateRouteTable1
       DestinationCidrBlock: 0.0.0.0/0
@@ -201,7 +206,9 @@ Resources:
 
   PrivRoute2:
     Type: AWS::EC2::Route
-    DependsOn: PrivateRouteTable2
+    DependsOn: 
+    - PrivateRouteTable2
+    - NatGateway2
     Properties:
       RouteTableId: !Ref PrivateRouteTable2
       DestinationCidrBlock: 0.0.0.0/0
@@ -219,6 +226,9 @@ Resources:
 
   PrivSub2RouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
+    DependsOn: 
+    - PrivateSubnet2
+    - PrivateRouteTable2
     Properties:
       SubnetId: !Ref PrivateSubnet2
       RouteTableId: !Ref PrivateRouteTable2
