@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: VPC with 2 public subnets and 2 private subnets
+Description: VPC with 2 public and 2 private subnets
 
 Parameters:
   VPCCidrBlock:
@@ -117,7 +117,9 @@ Resources:
 # Creating internet route and associating it to the InternetGatewayAttachment
   DefaultPublicInternetRoute:
     Type: AWS::EC2::Route
-    DependsOn: PublicRouteTable
+    DependsOn: 
+    - PublicRouteTable
+    - InternetGateway
     Properties:
       RouteTableId: !Ref PublicRouteTable
       DestinationCidrBlock: 0.0.0.0/0
@@ -135,9 +137,7 @@ Resources:
 
   PublicSubnet2RouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
-    DependsOn: 
-    - PublicSubnet1
-    - PublicRouteTable
+    DependsOn: PublicSubnet1
     Properties:
       SubnetId: !Ref PublicSubnet2
       RouteTableId: !Ref PublicRouteTable
@@ -196,7 +196,7 @@ Resources:
     DependsOn: PrivateRouteTable1
     Properties:
       RouteTableId: !Ref PrivateRouteTable1
-      DestinationCidrBlock: !Ref VPCCidrBlock
+      DestinationCidrBlock: 0.0.0.0/0
       GatewayId: !Ref NatGateway1
 
   PrivRoute2:
@@ -204,7 +204,7 @@ Resources:
     DependsOn: PrivateRouteTable2
     Properties:
       RouteTableId: !Ref PrivateRouteTable2
-      DestinationCidrBlock: !Ref VPCCidrBlock
+      DestinationCidrBlock: 0.0.0.0/0
       GatewayId: !Ref NatGateway2
 
 # Associating each private route table to each private subnet
@@ -219,9 +219,6 @@ Resources:
 
   PrivSub2RouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
-    DependsOn: 
-    - PrivateSubnet2
-    - PrivateRouteTable2
     Properties:
       SubnetId: !Ref PrivateSubnet2
       RouteTableId: !Ref PrivateRouteTable2
@@ -242,3 +239,4 @@ Outputs:
   PrivateSubnet2Id:
     Description: Private Subnet 2 ID
     Value: !Ref PrivateSubnet2
+
