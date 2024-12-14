@@ -9,16 +9,26 @@ Parameters:
     Default: TweetServers
 
   NetworkStackName:
-    Type: String 
+    Type: String
     Description: Name of the network stack
-    Default: XNetworkStack
+    Default: NetworkStack
 
   KeyPairName:
     Description: Key pair name for SSH access
     Type: AWS::EC2::KeyPair::KeyName
 
-# Initiating EC2 linux instances
+  SecurityGroupsStackName:
+    Type: String
+    Description: Name of the security groups stack
+    Default: SecurityGroupsStack
 
+  ALBListenerPort:
+    Type: Number
+    Description: Port for the ALB listener
+    Default: 80
+
+Resources:
+  # Initiating EC2 linux instances
   LaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
     Properties:
@@ -27,16 +37,19 @@ Parameters:
         InstanceType: t3.micro
         ImageId: ami-05edb7c94b324f73c  # Amazon Linux 2023
         KeyName: !Ref KeyPairName
-        NetworkInterfaces:
-          - AssociatePublicIpAddress: false
-            SubnetId: !ImportValue !Sub "${NetworkStackName}-PrivateSubnet1Id"
-        TagSpecifications:
-          - ResourceType: instance
-            Tags:
-              - Key: Name
-                Value: AutoScalingInstance
+        SecurityGroupIds:
+          - !ImportValue InstanceSecurityGroupId
+        UserData:
+          Fn::Base64: 
+            !Sub |
+              #!/bin/bash
+              yum update -y
+              yum install -y httpd
+              systemctl start httpd
+              systemctl enable httpd
+              echo "<h1>Hello from Tweet App Server</h1>" > /var/www/html/index.html
 
-# Creating scaling group containing the 2 EC2 instances in the Networks.yaml template
+  # Creating scaling group containing the 2 EC2 instances
   TweetAutoScalingGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
     Properties:
@@ -48,12 +61,56 @@ Parameters:
         LaunchTemplateId: !Ref LaunchTemplate
         Version: !GetAtt LaunchTemplate.LatestVersionNumber
       VPCZoneIdentifier:
-        - !ImportValue !Sub "${NetworkStackName}-"PrivateSubnet1Id"
-        - !ImportValue !Sub "${NetworkStackName}-"PrivateSubnet1Id"
+        - !ImportValue PrivateSubnet1Id
+        - !ImportValue PrivateSubnet2Id
+      TargetGroupARNs:
+        - !Ref ALBTargetGroup
       Tags:
         - Key: Name
           Value: TweetAutoScalingInstance
           PropagateAtLaunch: true
+
+  # Application Load Balancer (ALB)
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: TweetALB
+      Scheme: internet-facing
+      Subnets:
+        - !ImportValue PublicSubnet1Id
+        - !ImportValue PublicSubnet2Id
+      SecurityGroups:
+        - !ImportValue ALBSecurityGroupId
+      Tags:
+        - Key: Name
+          Value: TweetALB
+
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: !Ref ALBListenerPort
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTargetGroup
+
+  ALBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: TweetTargetGroup
+      VpcId: !ImportValue VPCId
+      Port: 80
+      Protocol: HTTP
+      TargetType: instance
+      HealthCheckEnabled: true
+      HealthCheckPath: /
+      HealthCheckProtocol: HTTP
+      HealthCheckPort: traffic-port
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 3
+      UnhealthyThresholdCount: 3
 
 Outputs:
   AutoScalingGroupId:
@@ -63,3 +120,15 @@ Outputs:
   LaunchTemplateId:
     Description: The ID of the Launch Template
     Value: !Ref LaunchTemplate
+
+  ALBArn:
+    Description: The ARN of the Application Load Balancer
+    Value: !Ref ApplicationLoadBalancer
+
+  ALBListenerArn:
+    Description: The ARN of the ALB Listener
+    Value: !Ref ALBListener
+
+  TargetGroupArn:
+    Description: The ARN of the Target Group
+    Value: !Ref ALBTargetGroup
