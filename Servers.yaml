@@ -1,0 +1,65 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Auto Scaling Group with EC2 instances in private subnets
+
+# Defining parameters
+Parameters:
+  LaunchTemplateName:
+    Type: String
+    Description: Name of the EC2 Launch Template
+    Default: TweetServers
+
+  NetworkStackName:
+    Type: String 
+    Description: Name of the network stack
+    Default: XNetworkStack
+
+  KeyPairName:
+    Description: Key pair name for SSH access
+    Type: AWS::EC2::KeyPair::KeyName
+
+# Initiating EC2 linux instances
+
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Ref LaunchTemplateName
+      LaunchTemplateData:
+        InstanceType: t3.micro
+        ImageId: ami-05edb7c94b324f73c  # Amazon Linux 2023
+        KeyName: !Ref KeyPairName
+        NetworkInterfaces:
+          - AssociatePublicIpAddress: false
+            SubnetId: !ImportValue !Sub "${NetworkStackName}-PrivateSubnet1Id"
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: AutoScalingInstance
+
+# Creating scaling group containing the 2 EC2 instances in the Networks.yaml template
+  TweetAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: TweetAutoScalingGroup
+      MinSize: 2
+      MaxSize: 2
+      DesiredCapacity: 2
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt LaunchTemplate.LatestVersionNumber
+      VPCZoneIdentifier:
+        - !ImportValue !Sub "${NetworkStackName}-"PrivateSubnet1Id"
+        - !ImportValue !Sub "${NetworkStackName}-"PrivateSubnet1Id"
+      Tags:
+        - Key: Name
+          Value: TweetAutoScalingInstance
+          PropagateAtLaunch: true
+
+Outputs:
+  AutoScalingGroupId:
+    Description: The ID of the Auto Scaling Group
+    Value: !Ref TweetAutoScalingGroup
+
+  LaunchTemplateId:
+    Description: The ID of the Launch Template
+    Value: !Ref LaunchTemplate
