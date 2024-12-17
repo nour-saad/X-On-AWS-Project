@@ -1,7 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Auto Scaling Group with EC2 instances in private subnets
+Description: Auto Scaling Group with EC2 instances in private subnets, fetching index from S3
 
-# Defining parameters
 Parameters:
   LaunchTemplateName:
     Type: String
@@ -26,15 +25,38 @@ Parameters:
     Type: Number
     Description: Port for the ALB listener
     Default: 80
-  
-  EBSVolumeSize:
-    Type: Number
-    Description: Size of the additional EBS volume in GiB
-    Default: 20
-    MinValue: 1
-    MaxValue: 16384
+
+  HTMLBucketName:
+    Type: String
+    Description: S3 Bucket name for hosting nginx default pages
+    Default: tweet-app-html-bucket
 
 Resources:
+
+  # S3 Bucket for Default Nginx Pages
+  HTMLBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref HTMLBucketName
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+
+  # S3 Bucket Policy to make objects publicly readable
+  HTMLBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref HTMLBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: PublicReadGetObject
+            Effect: Allow
+            Principal: '*'
+            Action: s3:GetObject
+            Resource: !Sub '${HTMLBucket.Arn}/*'
 
   # IAM Role for EC2 Instances
   EC2InstanceRole:
@@ -49,6 +71,16 @@ Resources:
                 - ec2.amazonaws.com
             Action:
               - sts:AssumeRole
+      Policies:
+        - PolicyName: S3HTMLAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource: 
+                  - !Sub '${HTMLBucket.Arn}/*'
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
         - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
@@ -75,19 +107,6 @@ Resources:
           - !ImportValue InstanceSecurityGroupId
         IamInstanceProfile:
           Name: !Ref EC2InstanceProfile
-        BlockDeviceMappings:
-          - DeviceName: /dev/xvda  # Root volume
-            Ebs:
-              VolumeType: gp3
-              VolumeSize: 20
-              Encrypted: true
-              DeleteOnTermination: true
-          - DeviceName: /dev/xvdf  # Additional data volume
-            Ebs:
-              VolumeType: gp3
-              VolumeSize: !Ref EBSVolumeSize
-              Encrypted: true
-              DeleteOnTermination: true
         UserData:
           Fn::Base64: 
             !Sub |
@@ -96,36 +115,15 @@ Resources:
               yum update -y
 
               # Install dependencies
-              yum install -y httpd awscli
+              amazon-linux-extras enable nginx1
+              yum install -y nginx awscli
 
-              # Configure additional EBS volume
-              DEVICE="/dev/xvdf"
-              MOUNT_POINT="/mnt/data"
+              # Fetch default nginx pages from S3
+              aws s3 cp s3://${HTMLBucketName}/ /usr/share/nginx/html/ --recursive
 
-              # Check if the device exists
-              if [ -b $DEVICE ]; then
-                # Create filesystem if not already created
-                if ! blkid $DEVICE; then
-                  mkfs -t ext4 $DEVICE
-                fi
-
-                # Create mount point
-                mkdir -p $MOUNT_POINT
-
-                # Add to fstab
-                echo "$DEVICE $MOUNT_POINT ext4 defaults,nofail 0 2" >> /etc/fstab
-
-                # Mount the volume
-                mount -a
-              fi
-
-              # Start and enable web server
-              systemctl start httpd
-              systemctl enable httpd
-
-              # Create sample index page
-              echo "<h1>Hello from Tweet App Server</h1>" > /var/www/html/index.html
-              echo "<p>Additional data volume mounted at $MOUNT_POINT</p>" >> /var/www/html/index.html
+              # Start and enable nginx
+              systemctl start nginx
+              systemctl enable nginx
 
   # Creating scaling group containing the 2 EC2 instances
   TweetAutoScalingGroup:
@@ -182,7 +180,6 @@ Resources:
       Protocol: HTTP
       TargetType: instance
       HealthCheckEnabled: true
-      HealthCheckPath: /
       HealthCheckProtocol: HTTP
       HealthCheckPort: traffic-port
       HealthCheckIntervalSeconds: 30
@@ -191,22 +188,6 @@ Resources:
       UnhealthyThresholdCount: 3
 
 Outputs:
-  AutoScalingGroupId:
-    Description: The ID of the Auto Scaling Group
-    Value: !Ref TweetAutoScalingGroup
-
-  LaunchTemplateId:
-    Description: The ID of the Launch Template
-    Value: !Ref LaunchTemplate
-
-  ALBArn:
-    Description: The ARN of the Application Load Balancer
-    Value: !Ref ApplicationLoadBalancer
-
-  ALBListenerArn:
-    Description: The ARN of the ALB Listener
-    Value: !Ref ALBListener
-
-  TargetGroupArn:
-    Description: The ARN of the Target Group
-    Value: !Ref ALBTargetGroup
+  ALBDNSName:
+    Description: The DNS name of the load balancer
+    Value: !GetAtt ApplicationLoadBalancer.DNSName
