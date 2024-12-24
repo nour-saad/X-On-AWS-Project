@@ -28,37 +28,20 @@ Parameters:
 
   HTMLBucketName:
     Type: String
-    Description: S3 Bucket name for hosting nginx default pages
+    Description: S3 Bucket name for hosting nginx pages
     Default: tweet-app-html-bucket
 
 Resources:
-
-  # S3 Bucket for Default Nginx Pages
   HTMLBucket:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Ref HTMLBucketName
       PublicAccessBlockConfiguration:
-        BlockPublicAcls: false
-        BlockPublicPolicy: false
-        IgnorePublicAcls: false
-        RestrictPublicBuckets: false
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
 
-  # S3 Bucket Policy to make objects publicly readable
-  HTMLBucketPolicy:
-    Type: AWS::S3::BucketPolicy
-    Properties:
-      Bucket: !Ref HTMLBucket
-      PolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Sid: PublicReadGetObject
-            Effect: Allow
-            Principal: '*'
-            Action: s3:GetObject
-            Resource: !Sub '${HTMLBucket.Arn}/*'
-
-  # IAM Role for EC2 Instances
   EC2InstanceRole:
     Type: AWS::IAM::Role
     Properties:
@@ -79,14 +62,16 @@ Resources:
               - Effect: Allow
                 Action:
                   - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
                 Resource: 
-                  - !Sub '${HTMLBucket.Arn}/*'
+                  - !Sub arn:aws:s3:::${HTMLBucketName} 
+                  - !Sub arn:aws:s3:::${HTMLBucketName}/*
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
         - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
       Path: /
 
-  # IAM Instance Profile
   EC2InstanceProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
@@ -94,9 +79,28 @@ Resources:
       Roles:
         - !Ref EC2InstanceRole
 
-  # Initiating EC2 linux instances
+  BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    DependsOn: EC2InstanceRole
+    Properties:
+      Bucket: !Ref HTMLBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              AWS: !GetAtt EC2InstanceRole.Arn
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+              - s3:DeleteObject
+              - s3:RestoreObject
+            Resource: 
+              - !Sub "arn:aws:s3:::${HTMLBucket}/*"
+
   LaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
+    DependsOn: EC2InstanceProfile
     Properties:
       LaunchTemplateName: !Ref LaunchTemplateName
       LaunchTemplateData:
@@ -110,24 +114,74 @@ Resources:
         UserData:
           Fn::Base64: 
             !Sub |
-              #!/bin/bash
-              # Update system
+              #!/bin/bash -xe
               yum update -y
-
-              # Install dependencies
-              amazon-linux-extras enable nginx1
-              yum install -y nginx awscli
-
-              # Fetch default nginx pages from S3
-              aws s3 cp s3://${HTMLBucketName}/ /usr/share/nginx/html/ --recursive
-
-              # Start and enable nginx
+              yum install -y nginx aws-cli
+              echo "Syncing content from S3..."
+              aws s3 sync s3://${HTMLBucketName} /usr/share/nginx/html/ || exit 1
+              echo "Starting Nginx..."
               systemctl start nginx
               systemctl enable nginx
 
-  # Creating scaling group containing the 2 EC2 instances
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    DependsOn: LaunchTemplate
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt LaunchTemplate.LatestVersionNumber
+      SubnetId: !ImportValue PrivateSubnet1Id
+      Tags:
+        - Key: Name
+          Value: TweetEC2Instance
+
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: TweetALB
+      Scheme: internet-facing
+      Subnets:
+        - !ImportValue PublicSubnet1Id
+        - !ImportValue PublicSubnet2Id
+      SecurityGroups:
+        - !ImportValue ALBSecurityGroupId
+      Tags:
+        - Key: Name
+          Value: TweetALB
+
+  ALBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: TweetTargetGroup
+      VpcId: !ImportValue VPCId
+      Port: 80
+      Protocol: HTTP
+      TargetType: instance
+      HealthCheckEnabled: true
+      HealthCheckProtocol: HTTP
+      HealthCheckPort: traffic-port
+      HealthCheckPath: /
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 3
+      UnhealthyThresholdCount: 3
+      Targets:
+        - Id: !Ref EC2Instance
+          Port: 80
+
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: !Ref ALBListenerPort
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTargetGroup
+
   TweetAutoScalingGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
+    DependsOn: ApplicationLoadBalancer
     Properties:
       AutoScalingGroupName: TweetAutoScalingGroup
       MinSize: 2
@@ -146,48 +200,11 @@ Resources:
           Value: TweetAutoScalingInstance
           PropagateAtLaunch: true
 
-  # Application Load Balancer (ALB)
-  ApplicationLoadBalancer:
-    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
-    Properties:
-      Name: TweetALB
-      Scheme: internet-facing
-      Subnets:
-        - !ImportValue PublicSubnet1Id
-        - !ImportValue PublicSubnet2Id
-      SecurityGroups:
-        - !ImportValue ALBSecurityGroupId
-      Tags:
-        - Key: Name
-          Value: TweetALB
-
-  ALBListener:
-    Type: AWS::ElasticLoadBalancingV2::Listener
-    Properties:
-      LoadBalancerArn: !Ref ApplicationLoadBalancer
-      Port: !Ref ALBListenerPort
-      Protocol: HTTP
-      DefaultActions:
-        - Type: forward
-          TargetGroupArn: !Ref ALBTargetGroup
-
-  ALBTargetGroup:
-    Type: AWS::ElasticLoadBalancingV2::TargetGroup
-    Properties:
-      Name: TweetTargetGroup
-      VpcId: !ImportValue VPCId
-      Port: 80
-      Protocol: HTTP
-      TargetType: instance
-      HealthCheckEnabled: true
-      HealthCheckProtocol: HTTP
-      HealthCheckPort: traffic-port
-      HealthCheckIntervalSeconds: 30
-      HealthCheckTimeoutSeconds: 5
-      HealthyThresholdCount: 3
-      UnhealthyThresholdCount: 3
-
 Outputs:
   ALBDNSName:
     Description: The DNS name of the load balancer
     Value: !GetAtt ApplicationLoadBalancer.DNSName
+    
+  EC2Instance:
+    Description: ID of the single EC2 instance
+    Value: !Ref EC2Instance

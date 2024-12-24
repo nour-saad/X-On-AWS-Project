@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: VPC with 2 public and 2 private subnets, optimized with single NAT Gateway
+Description: VPC with 2 public and 2 private subnets
 
 Parameters:
   VPCCidrBlock:
@@ -150,60 +150,94 @@ Resources:
       SubnetId: !Ref PublicSubnet2
       RouteTableId: !Ref PublicRouteTable
 
-# Creating NAT Gateway and EIP for the first public subnet
-  EIPForNat:
+# Creating NAT Gateway and EIP for each public subnet
+  EIPForNat1:
     Type: AWS::EC2::EIP
     Properties:
       Domain: vpc
 
-  NatGateway:
+  NatGateway1:
     Type: AWS::EC2::NatGateway
     DependsOn: PublicSubnet1
     Properties:
       SubnetId: !Ref PublicSubnet1
-      AllocationId: !GetAtt EIPForNat.AllocationId
+      AllocationId: !GetAtt EIPForNat1.AllocationId
       Tags:
         - Key: Name
-          Value: NatGateway
+          Value: NatGateway1
 
-# Creating 1 route table for private subnets
-  PrivateRouteTable:
+  EIPForNat2:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  NatGateway2:
+    Type: AWS::EC2::NatGateway
+    DependsOn: PublicSubnet2
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      AllocationId: !GetAtt EIPForNat2.AllocationId
+      Tags:
+        - Key: Name
+          Value: NatGateway2
+
+# Creating 2 route tables for each private subnet
+  PrivateRouteTable1:
     Type: AWS::EC2::RouteTable
     DependsOn: VPC
     Properties:
       VpcId: !Ref VPC
       Tags:
         - Key: Name
-          Value: PrivateRouteTable
+          Value: PrivateRouteTable1
 
-  PrivRoute:
+  PrivateRouteTable2:
+    Type: AWS::EC2::RouteTable
+    DependsOn: VPC
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: PrivateRouteTable2
+
+  PrivRoute1:
     Type: AWS::EC2::Route
     DependsOn: 
-    - PrivateRouteTable
-    - NatGateway
+    - PrivateRouteTable1
+    - NatGateway1
     Properties:
-      RouteTableId: !Ref PrivateRouteTable
+      RouteTableId: !Ref PrivateRouteTable1
       DestinationCidrBlock: 0.0.0.0/0
-      NatGatewayId: !Ref NatGateway
+      GatewayId: !Ref NatGateway1
 
-# Associating private route table to both private subnets
+  PrivRoute2:
+    Type: AWS::EC2::Route
+    DependsOn: 
+    - PrivateRouteTable2
+    - NatGateway2
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable2
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref NatGateway2
+
+# Associating each private route table to each private subnet
   PrivSub1RouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
     DependsOn: 
     - PrivateSubnet1
-    - PrivateRouteTable
+    - PrivateRouteTable1
     Properties:
       SubnetId: !Ref PrivateSubnet1
-      RouteTableId: !Ref PrivateRouteTable
+      RouteTableId: !Ref PrivateRouteTable1
 
   PrivSub2RouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
     DependsOn: 
     - PrivateSubnet2
-    - PrivateRouteTable
+    - PrivateRouteTable2
     Properties:
       SubnetId: !Ref PrivateSubnet2
-      RouteTableId: !Ref PrivateRouteTable
+      RouteTableId: !Ref PrivateRouteTable2
 
 Outputs:
   VPCId:
