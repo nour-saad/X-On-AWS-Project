@@ -61,7 +61,10 @@ Resources:
             Statement:
               - Effect: Allow
                 Action: "*"
-                Resource: "*"
+                Resource: !Sub arn:aws:s3:::${HTMLBucketName}
+              - Effect: Allow
+                Action: "*"
+                Resource: !Sub arn:aws:s3:::${HTMLBucketName}/*
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
         - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
@@ -73,22 +76,6 @@ Resources:
       Path: /
       Roles:
         - !Ref EC2InstanceRole
-
-  BucketPolicy:
-    Type: AWS::S3::BucketPolicy
-    DependsOn: EC2InstanceRole
-    Properties:
-      Bucket: !Ref HTMLBucket
-      PolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: "Allow"
-            Principal:
-              AWS: !GetAtt EC2InstanceRole.Arn
-            Action: "*"
-            Resource: 
-              - !Sub "arn:aws:s3:::${HTMLBucket}"
-              - !Sub "arn:aws:s3:::${HTMLBucket}/*"
 
   LaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
@@ -110,17 +97,42 @@ Resources:
               yum update -y
               yum install -y nginx aws-cli
 
-              aws s3 ls
-              aws s3 cp s3://${HTMLBucketName} /usr/share/nginx/html/ || exit 1
-              systemctl start nginx
-              systemctl enable nginx
+              aws configure set default.region ${AWS::Region}
 
-              cat << 'EOF' > /usr/local/bin/update-content.sh
-              #!/bin/bash
-              aws s3 cp s3://${HTMLBucketName} /usr/share/nginx/html/
-              EOF
-              chmod +x /usr/local/bin/update-content.sh
-              (crontab -l ; echo "@reboot /usr/local/bin/update-content.sh") | crontab -
+              # Create website directory
+              WEBSITE_DIR="/usr/share/nginx/html"
+              rm -rf $WEBSITE_DIR/*
+
+              # Download content from S3
+              aws s3 sync s3://${HTMLBucketName}/ $WEBSITE_DIR/
+
+              # Configure nginx
+              cat > /etc/nginx/conf.d/default.conf << 'EOL'
+              server {
+                  listen 80;
+                  server_name _;
+                  root /usr/share/nginx/html;
+                  index index.html index.htm;
+                  
+                  location / {
+                      try_files $uri $uri/ =404;
+                  }
+              }
+              EOL
+
+              # Set permissions
+              chown -R nginx:nginx $WEBSITE_DIR
+              chmod -R 755 $WEBSITE_DIR
+
+              # Start and enable nginx
+              systemctl enable nginx
+              systemctl start nginx
+
+              # Set up automatic content refresh (every 1 minute)
+              echo "*/1 * * * * root aws s3 sync s3://${HTMLBucketName}/ $WEBSITE_DIR/" > /etc/cron.d/sync-s3-content
+
+              # Restart crond to apply new cron job
+              systemctl restart crond
 
   ApplicationLoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
