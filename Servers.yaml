@@ -85,11 +85,9 @@ Resources:
           - Effect: "Allow"
             Principal:
               AWS: !GetAtt EC2InstanceRole.Arn
-            Action:
-              - s3:GetObject
-              - s3:PutObject
-              - s3:DeleteObject
+            Action: "*"
             Resource: 
+              - !Sub "arn:aws:s3:::${HTMLBucket}"
               - !Sub "arn:aws:s3:::${HTMLBucket}/*"
 
   LaunchTemplate:
@@ -111,24 +109,18 @@ Resources:
               #!/bin/bash -xe
               yum update -y
               yum install -y nginx aws-cli
+
               aws s3 ls
-              echo "Syncing content from S3..."
-              aws s3 sync s3://${HTMLBucketName} /usr/share/nginx/html/ || exit 1
-              echo "Starting Nginx..."
+              aws s3 cp s3://${HTMLBucketName} /usr/share/nginx/html/ || exit 1
               systemctl start nginx
               systemctl enable nginx
 
-  EC2Instance:
-    Type: AWS::EC2::Instance
-    DependsOn: LaunchTemplate
-    Properties:
-      LaunchTemplate:
-        LaunchTemplateId: !Ref LaunchTemplate
-        Version: !GetAtt LaunchTemplate.LatestVersionNumber
-      SubnetId: !ImportValue PrivateSubnet1Id
-      Tags:
-        - Key: Name
-          Value: TweetEC2Instance
+              cat << 'EOF' > /usr/local/bin/update-content.sh
+              #!/bin/bash
+              aws s3 cp s3://${HTMLBucketName} /usr/share/nginx/html/
+              EOF
+              chmod +x /usr/local/bin/update-content.sh
+              (crontab -l ; echo "@reboot /usr/local/bin/update-content.sh") | crontab -
 
   ApplicationLoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
@@ -160,9 +152,6 @@ Resources:
       HealthCheckTimeoutSeconds: 5
       HealthyThresholdCount: 3
       UnhealthyThresholdCount: 3
-      Targets:
-        - Id: !Ref EC2Instance
-          Port: 80
 
   ALBListener:
     Type: AWS::ElasticLoadBalancingV2::Listener
@@ -200,6 +189,3 @@ Outputs:
     Description: The DNS name of the load balancer
     Value: !GetAtt ApplicationLoadBalancer.DNSName
     
-  EC2Instance:
-    Description: ID of the single EC2 instance
-    Value: !Ref EC2Instance
