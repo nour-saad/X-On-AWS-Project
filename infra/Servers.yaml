@@ -96,6 +96,9 @@ Resources:
               #!/bin/bash -xe
               yum update -y
               yum install -y nginx aws-cli
+              sudo yum install docker -y
+              sudo service docker start
+              sudo usermod -aG docker ec2-user  # Allows running Docker without sudo
 
               aws configure set default.region ${AWS::Region}
 
@@ -128,11 +131,18 @@ Resources:
               systemctl enable nginx
               systemctl start nginx
 
+              # Login to ECR and pull the image
+              $(aws ecr get-login-password --region <region>) | docker login --username AWS --password-stdin <account_id>.dkr.ecr.<region>.amazonaws.com
+              docker pull <account_id>.dkr.ecr.<region>.amazonaws.com/twitter-service:latest
+
+              # Run the container
+              docker run -d -p 8080:8080 --env PORT=8080 <account_id>.dkr.ecr.<region>.amazonaws.com/twitter-service:latest
+
               # Set up automatic content refresh (every 1 minute)
-              echo "*/1 * * * * root aws s3 sync s3://${HTMLBucketName}/ $WEBSITE_DIR/" > /etc/cron.d/sync-s3-content
+              # echo "*/1 * * * * root aws s3 sync s3://${HTMLBucketName}/ $WEBSITE_DIR/" > /etc/cron.d/sync-s3-content
 
               # Restart crond to apply new cron job
-              systemctl restart crond
+              # systemctl restart crond
 
   ApplicationLoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer

@@ -1,0 +1,107 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"mime/multipart"
+	"net/http"
+	"os"
+
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/aws/aws-sdk-go/service/s3"
+)
+
+var (
+	dynamoDB *dynamodb.DynamoDB
+	s3Svc    *s3.S3
+	ctx      = context.Background()
+)
+
+func init() {
+	// Initialize AWS Session
+	sess := session.Must(session.NewSession())
+
+	// DynamoDB Client
+	dynamoDB = dynamodb.New(sess)
+
+	// S3 Client
+	s3Svc = s3.New(sess)
+}
+
+type User struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Email      string `json:"email"`
+	ProfileURL string `json:"profile_url,omitempty"`
+}
+
+func uploadFileToS3(file multipart.File, fileName string) (string, error) {
+	bucketName := os.Getenv("S3_BUCKET_NAME")
+
+	// Upload the file to S3
+	_, err := s3Svc.PutObject(&s3.PutObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(fileName),
+		Body:   file,
+		ACL:    aws.String("public-read"),
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to upload file to S3: %w", err)
+	}
+
+	// Construct the S3 object URL
+	fileURL := fmt.Sprintf("https://%s.s3.amazonaws.com/%s", bucketName, fileName)
+	return fileURL, nil
+}
+
+func createUserHandler(w http.ResponseWriter, r *http.Request) {
+	// Parse form data (for file upload)
+	if err := r.ParseMultipartForm(10 << 20); err != nil {
+		http.Error(w, "Failed to parse form", http.StatusBadRequest)
+		return
+	}
+
+	user := User{
+		ID:    r.FormValue("id"),
+		Name:  r.FormValue("name"),
+		Email: r.FormValue("email"),
+	}
+
+	// Handle profile picture upload
+	file, handler, err := r.FormFile("profile_pic")
+	if err == nil {
+		defer file.Close()
+		fileURL, err := uploadFileToS3(file, "profiles/"+handler.Filename)
+		if err != nil {
+			http.Error(w, "Failed to upload profile picture", http.StatusInternalServerError)
+			return
+		}
+		user.ProfileURL = fileURL
+	}
+
+	// Save user data in DynamoDB
+	_, err = dynamoDB.PutItem(&dynamodb.PutItemInput{
+		TableName: aws.String("Users"),
+		Item: map[string]*dynamodb.AttributeValue{
+			"ID":         {S: aws.String(user.ID)},
+			"Name":       {S: aws.String(user.Name)},
+			"Email":      {S: aws.String(user.Email)},
+			"ProfileURL": {S: aws.String(user.ProfileURL)},
+		},
+	})
+	if err != nil {
+		http.Error(w, "Failed to save user data", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusCreated)
+	fmt.Fprintln(w, "User created successfully")
+}
+
+func main() {
+	http.HandleFunc("/users", createUserHandler)
+	log.Fatal(http.ListenAndServe(":8080", nil))
+}
